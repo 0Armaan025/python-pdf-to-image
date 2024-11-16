@@ -155,7 +155,7 @@ def scrape_detail_page(detail_url):
                 value = cols[1].text.strip()
 
                 # Assign data to the dictionary based on key
-                if key == "Title:":
+                if key == "Title":
                     filtered_data["title"] = value
                 elif key == "Author(s):":
                     filtered_data["author"] = value
