@@ -78,47 +78,53 @@ def search_libgen_non_fiction(book_name_or_isbn):
         return []
 
 def search_libgen_fiction(book_name_or_isbn):
-    url = "https://libgen.is/"
-    search_url = url + "fiction/"
+    # URL format for searching on Libgen
+    base_url = "https://libgen.is/fiction/"
     
-    # Check if the input looks like an ISBN (length of 13 or 10)
+    # Check if the input is an ISBN (length of 10 or 13, and only digits)
     if len(book_name_or_isbn) in [10, 13] and book_name_or_isbn.isdigit():
-        params = {"q": "ISBN " + book_name_or_isbn}  # Search with "ISBN" prefix
+        # Search by ISBN
+        search_url = base_url + f"?q=ISBN+{book_name_or_isbn}"
     else:
-        params = {"q": book_name_or_isbn}  # Regular search by title
-
+        # Search by book name/title
+        search_url = base_url + f"?q={book_name_or_isbn.replace(' ', '+')}"
+    
     try:
-        print('we are searching at', search_url, "params is", params)
-        response = requests.get(search_url, params=params)
+        print('We are searching at', search_url)
+        response = requests.get(search_url)
         response.raise_for_status()
+        
+        # Parse the HTML content of the page
         soup = BeautifulSoup(response.text, 'html.parser')
 
+        # Locate the table containing the search results
         results_table = soup.find("table", {"class": "catalog"})
         if not results_table:
-            return []
+            return []  # No results found
 
-        rows = results_table.find_all("tr")[1:]
+        rows = results_table.find_all("tr")[1:]  # Skipping the header row
         data = []
 
+        # Iterate over each row to extract relevant information
         for row in rows:
             cols = row.find_all("td")
             if len(cols) > 5:
-                title = cols[1].text.strip()
+                # Extract the title (third column)
+                title_td = cols[2]
+                title_anchors = title_td.find_all("a")
+                title = title_anchors[0].text.strip() if title_anchors else "N/A"
+                
+                # Extract the details page link (URL)
+                detail_page_link = "https://libgen.is" + title_anchors[0].get("href", "") if title_anchors else "N/A"
+
+                # Extract file type and size (fifth column)
                 extension = cols[4].text.strip()
 
-                if "pdf" not in extension.lower():
-                    continue
-
-                title_td = cols[1]
-                title_anchors = title_td.find_all("a")
-
-                detail_page_link = "N/A"
-                for anchor in title_anchors:
-                    href = anchor.get("href", "")
-                    if href.startswith("fiction/"):
-                        detail_page_link = "https://libgen.is/" + href
-                        break
-
+                # Filter based on file type (PDF/EPUB)
+                if "pdf" not in extension.lower() and "epub" not in extension.lower():
+                    continue  # Skip if the file is neither PDF nor EPUB
+                
+                # Extract mirror links (sixth column)
                 mirror_links = []
                 mirror_col = cols[5]
                 mirror_anchors = mirror_col.find_all("a")
@@ -127,6 +133,7 @@ def search_libgen_fiction(book_name_or_isbn):
                     if href.startswith("http://library.lol/"):
                         mirror_links.append(href)
 
+                # Append book info to the result list
                 data.append([title, detail_page_link, mirror_links])
 
         return data
