@@ -17,20 +17,23 @@ def fetch_additional_info(link):
         return f"Could not fetch additional info: {e}"
 
 def search_libgen_non_fiction(book_name_or_isbn):
-    url = "https://libgen.is/"
-    search_url = url + "search.php"
-    
-    # Check if the input looks like an ISBN (length of 13 or 10)
-    if len(book_name_or_isbn) in [10, 13] and book_name_or_isbn.isdigit():
-        params = {"req": "ISBN " + book_name_or_isbn}  # Search with "ISBN" prefix
-    else:
-        params = {"req": book_name_or_isbn}  # Regular search by title
+    url = "https://libgen.is/search.php"
+    params = {
+        "req": book_name_or_isbn,
+        "open": "0",
+        "res": "25",
+        "view": "simple",
+        "phrase": "1",
+        "column": "def",
+    }
 
     try:
-        response = requests.get(search_url, params=params)
+        response = requests.get(url, params=params)
+        print(f"Searching LibGen with URL: {url}, Parameters: {params}")
+
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        
+
         results_table = soup.find("table", {"class": "c"})
         if not results_table:
             return []
@@ -44,7 +47,8 @@ def search_libgen_non_fiction(book_name_or_isbn):
                 title = cols[2].text.strip()
                 extension = cols[8].text.strip()
 
-                if "pdf" not in extension.lower():
+                # Ensure only PDF or EPUB formats are considered
+                if "pdf" not in extension.lower() and "epub" not in extension.lower():
                     continue
 
                 title_td = cols[2]
@@ -54,10 +58,8 @@ def search_libgen_non_fiction(book_name_or_isbn):
                 for anchor in title_anchors:
                     href = anchor.get("href", "")
                     if href.startswith("book/index.php?md5="):
-                        detail_page_link = href
+                        detail_page_link = "https://libgen.is/" + href
                         break
-
-                detail_page_link = url + detail_page_link if detail_page_link != "N/A" else "N/A"
 
                 mirror_links = []
                 mirror_col = cols[9]
@@ -72,20 +74,21 @@ def search_libgen_non_fiction(book_name_or_isbn):
         return data
 
     except Exception as e:
-        print(f"An error occurred while searching in non-fiction: {e}")
+        print(f"An error occurred while searching non-fiction: {e}")
         return []
 
 def search_libgen_fiction(book_name_or_isbn):
     url = "https://libgen.is/"
-    search_url = url + "fiction/search.php"
+    search_url = url + "fiction/"
     
     # Check if the input looks like an ISBN (length of 13 or 10)
     if len(book_name_or_isbn) in [10, 13] and book_name_or_isbn.isdigit():
-        params = {"req": "ISBN " + book_name_or_isbn}  # Search with "ISBN" prefix
+        params = {"q": "ISBN " + book_name_or_isbn}  # Search with "ISBN" prefix
     else:
-        params = {"req": book_name_or_isbn}  # Regular search by title
+        params = {"q": book_name_or_isbn}  # Regular search by title
 
     try:
+        print('we are searching at', search_url, "params is", params)
         response = requests.get(search_url, params=params)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -153,6 +156,7 @@ def scrape_detail_page(detail_url):
             if len(cols) >= 2:
                 key = cols[0].text.strip()
                 value = cols[1].text.strip()
+                
 
                 # Assign data to the dictionary based on key
                 if key == "Title":
@@ -167,10 +171,12 @@ def scrape_detail_page(detail_url):
                     filtered_data["language"] = value
                 elif key == "ISBN:":
                     filtered_data["isbn"] = value
+                
                 elif key == "Size:":
                     filtered_data["size"] = value
                 elif key == "Pages (biblio\\tech):":
                     filtered_data["pages"] = value
+      
 
         # Extract additional information if present (e.g., description, torrent info)
         description_tag = soup.find('div', {'class': 'description'})
@@ -246,19 +252,20 @@ def scrape_isbn_from_detail_page(detail_url):
         return None
 
 def search_libgen(book_name):
-    results = search_libgen_non_fiction(book_name)
-    
-    if not results:
-        results = search_libgen_fiction(book_name)
+    non_fiction_results = search_libgen_non_fiction(book_name)
+    fiction_results = search_libgen_fiction(book_name)
 
-    if results:
+    # Combine both results
+    combined_results = non_fiction_results + fiction_results
+
+    if combined_results:
         response_data = []
-        for idx, result in enumerate(results, 1):
+        for idx, result in enumerate(combined_results, 1):
             title = result[0]
             detail_page_link = result[1]
             mirror_links = result[2]
 
-            # Scrape the ISBN from the detail page
+            # Scrape ISBN from detail page
             isbn = None
             if detail_page_link != "N/A":
                 isbn = scrape_isbn_from_detail_page(detail_page_link)
