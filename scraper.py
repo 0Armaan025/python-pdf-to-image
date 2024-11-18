@@ -1,4 +1,6 @@
-from flask import Flask, request, jsonify
+import os
+import time
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
@@ -6,6 +8,102 @@ import urllib
 
 app = Flask(__name__)
 CORS(app)
+
+DOWNLOAD_DIRECTORY = 'downloads'
+
+# Ensure the required directories exist
+def clear_previous_files():
+    if os.path.exists(DOWNLOAD_DIRECTORY):
+        for filename in os.listdir(DOWNLOAD_DIRECTORY):
+            file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+            os.remove(file_path)
+    else:
+        os.makedirs(DOWNLOAD_DIRECTORY)
+
+# Function to download the book from the mirror
+def download_book_from_mirror(mirror_url):
+    """
+    Downloads the book from the provided mirror URL by parsing the 'GET' anchor tag.
+    Args:
+        mirror_url (str): The URL to fetch the book page from.
+    Returns:
+        str: Path to the downloaded file or an error message.
+    """
+    try:
+        # Send a GET request to the mirror page
+        response = requests.get(mirror_url, timeout=30)  # Increase timeout
+        response.raise_for_status()
+
+        # Parse the HTML content using BeautifulSoup
+        soup = BeautifulSoup(response.text, 'html.parser')
+        anchor_tag = soup.find('h2').find('a', string='GET')  # Locate the anchor tag with 'GET'
+
+        if not anchor_tag:
+            return {"error": "Download link not found on the provided page."}
+
+        # Extract the URL from the anchor tag
+        book_url = anchor_tag['href']
+
+        # Fetch the book file with retry logic
+        max_retries = 3
+        retry_delay = 5  # seconds
+        for attempt in range(max_retries):
+            try:
+                book_response = requests.get(book_url, stream=True, timeout=30)  # Increase timeout
+                book_response.raise_for_status()
+                break
+            except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
+                if attempt < max_retries - 1:
+                    print(f"Retrying download... Attempt {attempt + 1} of {max_retries}")
+                    time.sleep(retry_delay)
+                else:
+                    return {"error": f"Failed to download the book: {str(e)}"}
+
+        # Get the filename from the URL
+        filename = book_url.split('/')[-1]
+        file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+
+        # Save the file locally
+        os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
+        with open(file_path, 'wb') as file:
+            for chunk in book_response.iter_content(chunk_size=1024):
+                if chunk:
+                    file.write(chunk)
+
+        file_extension = os.path.splitext(filename)[1].lower()  # Get file extension (e.g., .epub, .pdf)
+        download_url = f"http://127.0.0.1:8080/downloads/{filename}"  # Proper URL for download
+
+        return {"download_url": download_url, "file_extension": file_extension}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.route('/download', methods=['POST'])
+def download_endpoint():
+    """
+    Flask endpoint to trigger book download from a mirror.
+    Expects a JSON payload with 'mirror_url'.
+    """
+    data = request.get_json()
+    mirror_url = data.get('mirror_url')
+
+    if not mirror_url:
+        return jsonify({"error": "Missing 'mirror_url' in the request body."}), 400
+
+    download_result = download_book_from_mirror(mirror_url)
+
+    if "error" in download_result:
+        return jsonify({"error": download_result["error"]}), 500
+
+    return jsonify(download_result), 200
+
+@app.route('/downloads/<filename>')
+def serve_file(filename):
+    """
+    Serves the file from the download directory.
+    """
+    return send_from_directory(DOWNLOAD_DIRECTORY, filename)
+
+
 
 def fetch_additional_info(link):
     try:
@@ -78,7 +176,7 @@ def search_libgen_non_fiction(book_name_or_isbn):
         return []
 
 def search_libgen_fiction(book_name_or_isbn):
-    # URL format for searching on Libgen
+    
     base_url = "https://libgen.is/fiction/"
     
     # Check if the input is an ISBN (length of 10 or 13, and only digits)
@@ -331,30 +429,7 @@ def book_details():
     else:
         return jsonify({"status": "failure", "message": "Book not found with provided ISBN or name."}), 404
 
-@app.route('/download', methods=['GET'])
-def download_book():
-    book_id = request.args.get('book_id', type=int)
-    book_name = request.args.get('book_name', '')
-    
-    if not book_name or not book_id:
-        return jsonify({"status": "failure", "message": "Please provide book name and book ID."}), 400
 
-    books = search_libgen(book_name)
-    
-    if book_id > len(books) or book_id <= 0:
-        return jsonify({"status": "failure", "message": "Invalid book ID."}), 404
-
-    book = books[book_id - 1]
-    mirror_links = book["mirror_links"]
-    
-    if mirror_links:
-        download_results = []
-        for mirror_url in mirror_links:
-            download_result = download_book_from_mirror(mirror_url)
-            download_results.append(download_result)
-        return jsonify({"status": "success", "message": "Download initiated.", "data": download_results}), 200
-    else:
-        return jsonify({"status": "failure", "message": "No download links available."}), 404
 
 if __name__ == "__main__":
     app.run(debug=True, port=8080)
