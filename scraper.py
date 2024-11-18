@@ -5,6 +5,7 @@ from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import urllib
+import urllib.parse
 
 app = Flask(__name__)
 CORS(app)
@@ -21,6 +22,7 @@ def clear_previous_files():
         os.makedirs(DOWNLOAD_DIRECTORY)
 
 # Function to download the book from the mirror
+# Ensure you only have one download_book_from_mirror function
 def download_book_from_mirror(mirror_url):
     """
     Downloads the book from the provided mirror URL by parsing the 'GET' anchor tag.
@@ -61,7 +63,8 @@ def download_book_from_mirror(mirror_url):
 
         # Get the filename from the URL
         filename = book_url.split('/')[-1]
-        file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+        decoded_filename = urllib.parse.unquote(filename)
+        file_path = os.path.join(DOWNLOAD_DIRECTORY, decoded_filename)
 
         # Save the file locally
         os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
@@ -70,12 +73,13 @@ def download_book_from_mirror(mirror_url):
                 if chunk:
                     file.write(chunk)
 
-        file_extension = os.path.splitext(filename)[1].lower()  # Get file extension (e.g., .epub, .pdf)
-        download_url = f"http://127.0.0.1:8080/downloads/{filename}"  # Proper URL for download
+        file_extension = os.path.splitext(decoded_filename)[1].lower()  # Get file extension (e.g., .epub, .pdf)
+        download_url = f"http://127.0.0.1:8080/downloads/{decoded_filename}"  # Proper URL for download
 
         return {"download_url": download_url, "file_extension": file_extension}
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.route('/download', methods=['POST'])
 def download_endpoint():
@@ -102,6 +106,13 @@ def serve_file(filename):
     Serves the file from the download directory.
     """
     return send_from_directory(DOWNLOAD_DIRECTORY, filename)
+
+@app.route('/<filename>')
+def serve_file2(filename):
+    """
+    Serves the file from the download directory.
+    """
+    return send_from_directory("/",filename)
 
 
 
@@ -304,33 +315,7 @@ def scrape_detail_page(detail_url):
 
 
 
-def download_book_from_mirror(mirror_url):
-    try:
-        response = requests.get(mirror_url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
 
-        get_section = soup.find('h2', string="GET")
-        if not get_section:
-            return "No download link found."
-
-        download_link = get_section.find_next('a').get('href', '')
-        if not download_link:
-            return "No valid download link found."
-        
-        download_url = urllib.parse.urljoin(mirror_url, download_link)
-
-        file_response = requests.get(download_url)
-        file_response.raise_for_status()
-
-        filename = download_url.split("/")[-1]
-        with open(filename, 'wb') as file:
-            file.write(file_response.content)
-
-        return f"Book downloaded successfully: {filename}"
-
-    except Exception as e:
-        return f"Failed to download the book: {e}"
 
 def scrape_isbn_from_detail_page(detail_url):
     try:
