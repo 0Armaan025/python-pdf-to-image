@@ -73,7 +73,7 @@ def download_book_from_mirror(mirror_url):
                 if chunk:
                     file.write(chunk)
 
-        file_extension = os.path.splitext(decoded_filename)[1].lower()  # Get file extension (e.g., .epub, .pdf)
+        file_extension = os.path.splitext(decoded_filename)[1].lower()  
         download_url = f"http://127.0.0.1:8080/downloads/{decoded_filename}"  # Proper URL for download
 
         return {"download_url": download_url, "file_extension": file_extension}
