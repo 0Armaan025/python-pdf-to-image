@@ -130,7 +130,7 @@ def search_libgen_non_fiction(book_name_or_isbn):
     params = {
         "req": book_name_or_isbn,
         "open": "0",
-        "res": "25",
+        "res": "100",
         "view": "simple",
         "phrase": "1",
         "column": "def",
