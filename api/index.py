@@ -3,14 +3,20 @@ import time
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
+from pyuploadcare import Uploadcare
+
 from bs4 import BeautifulSoup
 import urllib
+
 import urllib.parse
 
 app = Flask(__name__)
 CORS(app)
 
-DOWNLOAD_DIRECTORY = 'downloads'
+DOWNLOAD_DIRECTORY = 'tmp'
+
+
+
 
 # Ensure the required directories exist
 def clear_previous_files():
@@ -33,7 +39,7 @@ def download_book_from_mirror(mirror_url):
     """
     try:
         # Send a GET request to the mirror page
-        response = requests.get(mirror_url, timeout=30)  # Increase timeout
+        response = requests.get(mirror_url, timeout=180)  # Increase timeout
         response.raise_for_status()
 
         # Parse the HTML content using BeautifulSoup
@@ -51,7 +57,7 @@ def download_book_from_mirror(mirror_url):
         retry_delay = 5  # seconds
         for attempt in range(max_retries):
             try:
-                book_response = requests.get(book_url, stream=True, timeout=30)  # Increase timeout
+                book_response = requests.get(book_url, stream=True, timeout=180)  # Increase timeout
                 book_response.raise_for_status()
                 break
             except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
@@ -74,7 +80,7 @@ def download_book_from_mirror(mirror_url):
                     file.write(chunk)
 
         file_extension = os.path.splitext(decoded_filename)[1].lower()  
-        download_url = f"http://127.0.0.1:8080/downloads/{decoded_filename}"  # Proper URL for download
+        download_url = f"http://127.0.0.1:8080/tmp/{decoded_filename}"  # Proper URL for download
 
         return {"download_url": download_url, "file_extension": file_extension}
     except Exception as e:
@@ -100,7 +106,7 @@ def download_endpoint():
 
     return jsonify(download_result), 200
 
-@app.route('/downloads/<filename>')
+@app.route('/tmp/<filename>')
 def serve_file(filename):
     """
     Serves the file from the download directory.
@@ -113,6 +119,23 @@ def serve_file2(filename):
     Serves the file from the download directory.
     """
     return send_from_directory("/",filename)
+
+
+
+# Ensure the required directories exist
+def clear_previous_files():
+    if os.path.exists(DOWNLOAD_DIRECTORY):
+        for filename in os.listdir(DOWNLOAD_DIRECTORY):
+            file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+            os.remove(file_path)
+    else:
+        os.makedirs(DOWNLOAD_DIRECTORY)
+
+# Function to download the book from the mirror
+# Ensure you only have one download_book_from_mirror function
+
+
+
 
 
 
@@ -416,3 +439,5 @@ def book_details():
 
 
 
+if __name__ == '__main__':
+    app.run(debug=True, port=8080)
