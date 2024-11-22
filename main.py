@@ -13,7 +13,7 @@ import urllib.parse
 app = Flask(__name__)
 CORS(app)
 
-DOWNLOAD_DIRECTORY = 'tmp'
+DOWNLOAD_DIRECTORY = 'downloads'
 
 
 
@@ -80,7 +80,7 @@ def download_book_from_mirror(mirror_url):
                     file.write(chunk)
 
         file_extension = os.path.splitext(decoded_filename)[1].lower()  
-        download_url = f"http://127.0.0.1:8080/tmp/{decoded_filename}"  # Proper URL for download
+        download_url = f"http://127.0.0.1:8080/downloads/{decoded_filename}"  # Proper URL for download
 
         return {"download_url": download_url, "file_extension": file_extension}
     except Exception as e:
@@ -106,12 +106,24 @@ def download_endpoint():
 
     return jsonify(download_result), 200
 
-@app.route('/tmp/<filename>')
-def serve_file(filename):
+
+@app.route('/downloads/<filename>')
+def serve_file_from_downloads(filename):
     """
-    Serves the file from the download directory.
+    Serves the file from the 'downloads' directory.
     """
-    return send_from_directory(DOWNLOAD_DIRECTORY, filename)
+    file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+
+    if not os.path.exists(file_path):
+        return jsonify({"error": "File not found"}), 404
+
+    response = send_from_directory(DOWNLOAD_DIRECTORY, filename)
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
 
 @app.route('/<filename>')
 def serve_file2(filename):
@@ -130,6 +142,12 @@ def clear_previous_files():
             os.remove(file_path)
     else:
         os.makedirs(DOWNLOAD_DIRECTORY)
+
+# Function to download the book from the mirror
+# Ensure you only have one download_book_from_mirror function
+
+
+# Ensure the required directories exist
 
 # Function to download the book from the mirror
 # Ensure you only have one download_book_from_mirror function
