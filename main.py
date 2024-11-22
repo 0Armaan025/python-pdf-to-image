@@ -53,19 +53,22 @@ def download_book_from_mirror(mirror_url):
         book_url = anchor_tag['href']
 
         # Fetch the book file with retry logic
-        max_retries = 3
-        retry_delay = 5  # seconds
+        max_retries = 5
+        retry_delay = 10  # seconds
         for attempt in range(max_retries):
             try:
                 book_response = requests.get(book_url, stream=True, timeout=180)  # Increase timeout
                 book_response.raise_for_status()
+                
+                # If successful, break out of retry loop
                 break
             except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
                 if attempt < max_retries - 1:
                     print(f"Retrying download... Attempt {attempt + 1} of {max_retries}")
                     time.sleep(retry_delay)
                 else:
-                    return {"error": f"Failed to download the book: {str(e)}"}
+                    # Return an error only if all retries fail
+                    return {"error": f"Failed to download the book after {max_retries} attempts: {str(e)}"}
 
         # Get the filename from the URL
         filename = book_url.split('/')[-1]
