@@ -1,7 +1,7 @@
 import os
 import time
 from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
+from flask_cors import CORS, cross_origin
 import requests
 
 from bs4 import BeautifulSoup
@@ -10,17 +10,15 @@ import urllib
 import urllib.parse
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="http://localhost:3000", allow_headers=["Content-Type", "Authorization"])
 
 
-DOWNLOAD_DIRECTORY = './downloads'
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-}
+
+DOWNLOAD_DIRECTORY = 'downloads'
+
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+
 
 
 def clear_previous_files():
@@ -41,9 +39,12 @@ def clear_previous_files():
 
 def download_book_from_mirror(mirror_url):
     """
-    Downloads the book from the provided mirror URL by parsing the 'GET' anchor tag.
+    Downloads the book from the provided mirror URL by checking first for the IPFS.io link,
+    and if that fails, checks for the 'GET' anchor tag. If both fail, returns the IPFS.io link.
+    
     Args:
         mirror_url (str): The URL to fetch the book page from.
+        
     Returns:
         dict: Dictionary with the download URL and file extension, or an error message.
     """
@@ -54,49 +55,79 @@ def download_book_from_mirror(mirror_url):
 
         # Parse the HTML content
         soup = BeautifulSoup(response.text, 'html.parser')
-        anchor_tag = soup.find('h2').find('a', string='GET')  # Locate the anchor tag with 'GET'
 
-        if not anchor_tag:
-            return {"error": "Download link not found on the provided page."}
+        # First, try to find the IPFS.io link
+        ipfs_tag = soup.find('a', string='IPFS.io')
+        if ipfs_tag:
+            ipfs_url = ipfs_tag['href']
 
-        # Extract the URL of the book
-        book_url = anchor_tag['href']
-
-        # Fetch the book file with retry logic
-        max_retries = 5
-        retry_delay = 3  # seconds
-        for attempt in range(max_retries):
+            # Attempt to download from IPFS
             try:
-                book_response = requests.get(book_url, headers=HEADERS, stream=True, timeout=180)
-                book_response.raise_for_status()
-                break  # Exit retry loop on success
+                ipfs_response = requests.get(ipfs_url, headers=HEADERS, stream=True, timeout=180)
+                ipfs_response.raise_for_status()
+
+                # Get the filename and file extension from IPFS URL
+                filename = urllib.parse.unquote(ipfs_url.split('/')[-1])
+                file_extension = os.path.splitext(filename)[1].lower()
+
+                # Save the file locally
+                os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
+                file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+                with open(file_path, 'wb') as file:
+                    for chunk in ipfs_response.iter_content(chunk_size=1024):
+                        if chunk:
+                            file.write(chunk)
+
+                return {"download_url": ipfs_url, "file_extension": file_extension}
+
             except requests.exceptions.RequestException as e:
-                print(f"Error during download attempt {attempt + 1}: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Double the delay for the next attempt
-                else:
-                    return {"error": f"Failed to download the book after {max_retries} attempts: {str(e)}"}
+                print(f"Error downloading from IPFS: {str(e)}")
+                # If IPFS download fails, try GET link
+                print("IPFS download failed, trying GET link...")
 
-        # Get the filename from the URL
-        filename = urllib.parse.unquote(book_url.split('/')[-1])
-        file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+        # If IPFS.io is not found or download failed, try to find the 'GET' anchor tag
+        anchor_tag = soup.find('h2').find('a', string='GET')  # Locate the anchor tag with 'GET'
+        if anchor_tag:
+            book_url = anchor_tag['href']
 
-        # Save the file locally
-        os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
-        with open(file_path, 'wb') as file:
-            for chunk in book_response.iter_content(chunk_size=1024):
-                if chunk:
-                    file.write(chunk)
+            # Attempt to download from GET link
+            max_retries = 2
+            retry_delay = 3  # seconds
+            for attempt in range(max_retries):
+                try:
+                    book_response = requests.get(book_url, headers=HEADERS, stream=True, timeout=180)
+                    book_response.raise_for_status()
+                    break  # Exit retry loop on success
+                except requests.exceptions.RequestException as e:
+                    print(f"Error during download attempt {attempt + 1}: {str(e)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Double the delay for the next attempt
+                    else:
+                        return {"error": f"Failed to download after retries: {str(e)}"}
 
-        # Generate the file extension and download URL
-        file_extension = os.path.splitext(filename)[1].lower()
-        download_url = f"{request.host_url.rstrip('/')}/downloads/{filename}"
+            # Get the filename from the URL
+            filename = urllib.parse.unquote(book_url.split('/')[-1])
+            file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
 
-        return {"download_url": download_url, "file_extension": file_extension}
+            # Save the file locally
+            os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
+            with open(file_path, 'wb') as file:
+                for chunk in book_response.iter_content(chunk_size=1024):
+                    if chunk:
+                        file.write(chunk)
+
+            # Generate the file extension and download URL
+            file_extension = os.path.splitext(filename)[1].lower()
+            download_url = f"{mirror_url.rstrip('/')}/downloads/{filename}"
+
+            return {"download_url": download_url, "file_extension": file_extension}
+
+        # If neither IPFS nor 'GET' is found, return the IPFS URL if it was initially found
+        return {"download_url": ipfs_url, "error": "Both IPFS and GET failed, but IPFS URL is returned."}
+
     except Exception as e:
         return {"error": str(e)}
-
 
 @app.route('/download', methods=['POST'])
 def download_endpoint():
@@ -123,7 +154,8 @@ def download_endpoint():
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@app.route('/downloads/<path:filename>')
+@app.route('/downloads/<filename>')
+@cross_origin()
 def serve_file_from_downloads(filename):
     """
     Serves the file from the 'downloads' directory.
