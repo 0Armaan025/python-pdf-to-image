@@ -3,7 +3,6 @@ import time
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
-from pyuploadcare import Uploadcare
 
 from bs4 import BeautifulSoup
 import urllib
@@ -13,67 +12,74 @@ import urllib.parse
 app = Flask(__name__)
 CORS(app)
 
-DOWNLOAD_DIRECTORY = 'downloads'
+
+DOWNLOAD_DIRECTORY = './downloads'
+
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+}
 
 
-
-
-# Ensure the required directories exist
 def clear_previous_files():
-    if os.path.exists(DOWNLOAD_DIRECTORY):
-        for filename in os.listdir(DOWNLOAD_DIRECTORY):
-            file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
-            os.remove(file_path)
-    else:
-        os.makedirs(DOWNLOAD_DIRECTORY)
+    """
+    Clears the contents of the download directory, creating it if necessary.
+    """
+    try:
+        if os.path.exists(DOWNLOAD_DIRECTORY):
+            for filename in os.listdir(DOWNLOAD_DIRECTORY):
+                file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+        else:
+            os.makedirs(DOWNLOAD_DIRECTORY)
+    except Exception as e:
+        print(f"Error clearing previous files: {str(e)}")
 
-# Function to download the book from the mirror
-# Ensure you only have one download_book_from_mirror function
+
 def download_book_from_mirror(mirror_url):
     """
     Downloads the book from the provided mirror URL by parsing the 'GET' anchor tag.
     Args:
         mirror_url (str): The URL to fetch the book page from.
     Returns:
-        str: Path to the downloaded file or an error message.
+        dict: Dictionary with the download URL and file extension, or an error message.
     """
     try:
-        # Send a GET request to the mirror page
-        response = requests.get(mirror_url, timeout=180)  # Increase timeout
+        # Fetch the HTML content of the mirror page
+        response = requests.get(mirror_url, headers=HEADERS, timeout=180)
         response.raise_for_status()
 
-        # Parse the HTML content using BeautifulSoup
+        # Parse the HTML content
         soup = BeautifulSoup(response.text, 'html.parser')
         anchor_tag = soup.find('h2').find('a', string='GET')  # Locate the anchor tag with 'GET'
 
         if not anchor_tag:
             return {"error": "Download link not found on the provided page."}
 
-        # Extract the URL from the anchor tag
+        # Extract the URL of the book
         book_url = anchor_tag['href']
 
         # Fetch the book file with retry logic
         max_retries = 5
-        retry_delay = 10  # seconds
+        retry_delay = 3  # seconds
         for attempt in range(max_retries):
             try:
-                book_response = requests.get(book_url, stream=True, timeout=180)  # Increase timeout
+                book_response = requests.get(book_url, headers=HEADERS, stream=True, timeout=180)
                 book_response.raise_for_status()
-                
-                # If successful, break out of retry loop
                 break
             except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
                 if attempt < max_retries - 1:
-                    print(f"Retrying download... Attempt {attempt + 1} of {max_retries}")
                     time.sleep(retry_delay)
+                    retry_delay *= 2  # Double the delay for the next attempt
                 else:
-                    # Return an error only if all retries fail
-                    return {"error": f"Failed to download the book after {max_retries} attempts: {str(e)}"}
+                    return {"error": f"Failed to download the book: {str(e)}"}
 
         # Get the filename from the URL
-        filename = book_url.split('/')[-1]
-        decoded_filename = urllib.parse.unquote(filename)
-        file_path = os.path.join(DOWNLOAD_DIRECTORY, decoded_filename)
+        filename = urllib.parse.unquote(book_url.split('/')[-1])
+        file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
 
         # Save the file locally
         os.makedirs(DOWNLOAD_DIRECTORY, exist_ok=True)
@@ -82,8 +88,9 @@ def download_book_from_mirror(mirror_url):
                 if chunk:
                     file.write(chunk)
 
-        file_extension = os.path.splitext(decoded_filename)[1].lower()  
-        download_url = f"http://127.0.0.1:8080/downloads/{decoded_filename}"  # Proper URL for download
+        # Generate the file extension and download URL
+        file_extension = os.path.splitext(filename)[1].lower()
+        download_url = f"{request.host_url.rstrip('/')}/downloads/{filename}"
 
         return {"download_url": download_url, "file_extension": file_extension}
     except Exception as e:
@@ -96,36 +103,41 @@ def download_endpoint():
     Flask endpoint to trigger book download from a mirror.
     Expects a JSON payload with 'mirror_url'.
     """
-    data = request.get_json()
-    mirror_url = data.get('mirror_url')
+    try:
+        data = request.get_json()
+        mirror_url = data.get('mirror_url')
 
-    if not mirror_url:
-        return jsonify({"error": "Missing 'mirror_url' in the request body."}), 400
+        if not mirror_url:
+            return jsonify({"error": "Missing 'mirror_url' in the request body."}), 400
 
-    download_result = download_book_from_mirror(mirror_url)
+        download_result = download_book_from_mirror(mirror_url)
 
-    if "error" in download_result:
-        return jsonify({"error": download_result["error"]}), 500
+        if "error" in download_result:
+            print(f"Download error: {download_result['error']}")
+            return jsonify({"error": download_result["error"]}), 500
 
-    return jsonify(download_result), 200
+        return jsonify(download_result), 200
+    except Exception as e:
+        print(f"Unhandled server error: {str(e)}")
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 
-@app.route('/downloads/<filename>')
+@app.route('/downloads/<path:filename>')
 def serve_file_from_downloads(filename):
     """
     Serves the file from the 'downloads' directory.
     """
-    file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
+    try:
+        safe_filename = os.path.basename(filename)  # Sanitize the filename
+        file_path = os.path.join(DOWNLOAD_DIRECTORY, safe_filename)
 
-    if not os.path.exists(file_path):
-        return jsonify({"error": "File not found"}), 404
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
 
-    response = send_from_directory(DOWNLOAD_DIRECTORY, filename)
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
-
+        return send_from_directory(DOWNLOAD_DIRECTORY, safe_filename)
+    except Exception as e:
+        print(f"Error serving file: {str(e)}")
+        return jsonify({"error": f"Error serving file: {str(e)}"}), 500
 
 
 @app.route('/<filename>')
@@ -137,14 +149,6 @@ def serve_file2(filename):
 
 
 
-# Ensure the required directories exist
-def clear_previous_files():
-    if os.path.exists(DOWNLOAD_DIRECTORY):
-        for filename in os.listdir(DOWNLOAD_DIRECTORY):
-            file_path = os.path.join(DOWNLOAD_DIRECTORY, filename)
-            os.remove(file_path)
-    else:
-        os.makedirs(DOWNLOAD_DIRECTORY)
 
 # Function to download the book from the mirror
 # Ensure you only have one download_book_from_mirror function
@@ -461,4 +465,5 @@ def book_details():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8080)
+    clear_previous_files()  # Clear any pre-existing files before starting
+    app.run(debug=True, host='0.0.0.0', port=5000)
