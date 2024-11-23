@@ -119,7 +119,7 @@ def download_book_from_mirror(mirror_url):
 
             # Generate the file extension and download URL
             file_extension = os.path.splitext(filename)[1].lower()
-            download_url = f"http://127.0.0.1:5000/downloads/{filename}"
+            download_url = f"https://5000-0armaan025-pythonpdftoi-vv9l3p2bxaa.ws-us116.gitpod.io/downloads/{filename}"
 
             return {"download_url": download_url, "file_extension": file_extension}
 
