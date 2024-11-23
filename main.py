@@ -63,17 +63,6 @@ def download_book_from_mirror(mirror_url):
 
             # Attempt to download from IPFS
             try:
-<<<<<<< HEAD
-                book_response = requests.get(book_url, headers=HEADERS, stream=True, timeout=180)
-                book_response.raise_for_status()
-                break
-            except (requests.exceptions.RequestException, requests.exceptions.ConnectionError) as e:
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Double the delay for the next attempt
-                else:
-                    return {"error": f"Failed to download the book: {str(e)}"}
-=======
                 ipfs_response = requests.get(ipfs_url, headers=HEADERS, stream=True, timeout=180)
                 ipfs_response.raise_for_status()
 
@@ -95,7 +84,6 @@ def download_book_from_mirror(mirror_url):
                 print(f"Error downloading from IPFS: {str(e)}")
                 # If IPFS download fails, try GET link
                 print("IPFS download failed, trying GET link...")
->>>>>>> 2e38814788ed08ec92e89dd90c87c587c0a2124c
 
         # If IPFS.io is not found or download failed, try to find the 'GET' anchor tag
         anchor_tag = soup.find('h2').find('a', string='GET')  # Locate the anchor tag with 'GET'
@@ -131,7 +119,7 @@ def download_book_from_mirror(mirror_url):
 
             # Generate the file extension and download URL
             file_extension = os.path.splitext(filename)[1].lower()
-            download_url = f"{mirror_url.rstrip('/')}/downloads/{filename}"
+            download_url = f"http://127.0.0.1:5000/downloads/{filename}"
 
             return {"download_url": download_url, "file_extension": file_extension}
 
